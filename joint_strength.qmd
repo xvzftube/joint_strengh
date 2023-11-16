@@ -1,0 +1,226 @@
+---
+title: "Statistical Analysis of Joint Strength Data: A Teaching Example"
+format:
+  html:
+    df-print: paged
+    theme:
+        dark: [superhero]
+---
+
+## Code
+
+```{r, message = F, echo = F}
+set.seed(42)
+library(tidyverse)
+# devtools::install_github("https://github.com/xvzftube/darknerdthemes")
+library(darknerdthemes)
+
+butt_joint <- c(1299.8, 1183, 1426.6, 1939.9, 1088.2)
+dovetail <- c(1711.1, 1658.2, 2325.2, 1447.6, 2054)
+box_joint <- c(328.5, 532.5, 1078.2, 880.9, 848.9)
+rabbet <- c(2223.7, 2135.5, 2729.8, 391.4, 1994.4)
+rabbet_dowel <- c(1518.1, 1531.4, 1544.6, 1337.3, 832.4)
+miter <- c(2721.8, 3013.7, 2203.9, 3315.2, 1298.7)
+miter_s1 <- c(2815.8, 3246.9, 2599.7, 2854.4, 2560.8)
+miter_s2 <- c(1837.9, 1298.9, 483.8, 2342.9, 1847.8)
+
+force_lb <- c(
+    butt_joint,
+    dovetail,
+    box_joint,
+    rabbet,
+    rabbet_dowel,
+    miter,
+    miter_s1,
+    miter_s2
+)
+
+test <- rep(seq(1, 5), 8)
+joint_name <- c(
+    rep("butt_joint", 5),
+    rep("dovetail", 5),
+    rep("box_joint", 5),
+    rep("rabbet", 5),
+    rep("rabbet_dowel", 5),
+    rep("miter", 5),
+    rep("miter_s1", 5),
+    rep("miter_s2", 5)
+)
+
+df <- tibble(joint_name, test, force_lb)
+df
+df |> write_csv("joint_data.csv")
+```
+
+Check the means to verify the data is correct
+
+```{r, echo = F}
+# 20 percent from top and 20 percent from bottom
+df |>
+    group_by(joint_name) |>
+    summarize(trimmed_mean = mean(force_lb, trim = .2), sigma = sd(force_lb)) |>
+    arrange(trimmed_mean)
+```
+
+# Resampling the data with only 3 samples looks funky
+
+```{r, echo = F}
+# filter by butt_joint and rabbet_dowel
+df_two_groups <- df |>
+    filter(joint_name %in% c("butt_joint", "dovetail"))
+
+# permutation test between joint_name 'butt_joint' and 'rabbet_dowel'
+
+first_mean <- mean(df[df$joint_name == "dovetail", ]$force_lb) - mean(df[df$joint_name == "butt_joint", ]$force_lb)
+
+n <- 5 # count per group
+
+# make empty tibble with column names permutation_mean_diff and alpha
+df_permutation <- NULL
+dfp <- NULL
+df_permutation <- tibble(permutation_mean_diff = numeric())
+sample <- 1000
+for (i in 1:sample) {
+    a <- sample(df_two_groups$force_lb, n)
+    # sample remaining not in a
+    b <- sample(df_two_groups$force_lb[!df_two_groups$force_lb %in% a], n)
+    # calculate the difference in means
+    permutation_mean_diff <- mean(a) - mean(b)
+    alpha <- first_mean > permutation_mean_diff
+    dfp <- tibble(permutation_mean_diff)
+    # append permutation_mean_diff and alpha in a tibble
+    df_permutation <- rbind(df_permutation, dfp)
+}
+df_permutation
+```
+
+```{r, echo = F}
+
+library(glue)
+p <- df_permutation |>
+    ggplot(aes(x = permutation_mean_diff)) +
+    stat_ecdf(color = "#e69875", size = 2) +
+    geom_vline(aes(xintercept = first_mean), color = "tomato", linetype = "longdash") +
+    geom_hline(aes(yintercept = .969), color = "tomato", linetype = "longdash") +
+    nerd_theme_nord() +
+    labs(
+        subtitle = "Cummulative Distribution of the Difference Of \nMean Force Break A Butt Joint - Mean Force Dovetail",
+        x = "Difference Of Means",
+        y = "Cumulative Distribution"
+    ) +
+    labs(caption = "1000 Random Samples") +
+    scale_x_continuous(breaks = scales::pretty_breaks(n = 20)) +
+    scale_y_continuous(breaks = scales::pretty_breaks(n = 20)) +
+    scale_color_nerd(palette = "nord aurora") +
+    annotate("text", x = first_mean - 470, y = .3, label = stringr::str_wrap(glue("Either we observed a data set that had {100*(1 - .969)}% chance of happening or dovetails are stonger than butt joints"), width = 30), hjust = 0, color = darknerdthemes::nerd_colors("nord-snow-storm-90"))
+p
+```
+
+```{r, echo = F}
+
+p <- df_permutation |>
+    ggplot(aes(x = permutation_mean_diff)) +
+    geom_density(color = "#e69875", size = 2, fill = "#e69875", alpha = .2) +
+    geom_vline(aes(xintercept = first_mean), color = "tomato", linetype = "longdash") +
+    nerd_theme_nord() +
+    labs(
+        subtitle = "Density Distribution of the Difference Of \nMean Force Break A Butt Joint - Mean Force Dovetail",
+        x = "Difference Of Means",
+        y = "Density"
+    ) +
+    labs(caption = "1000 Random Samples") +
+    scale_x_continuous(breaks = scales::pretty_breaks(n = 20)) +
+    scale_y_continuous(breaks = scales::pretty_breaks(n = 20)) +
+    scale_color_nerd(palette = "nord aurora")
+p
+```
+
+```{r, echo = F}
+df_permutation |>
+    filter(permutation_mean_diff > first_mean) |>
+    summarize(min(permutation_mean_diff))
+```
+
+# How many samples should be collected if a follow up test was done testing the glue starved hypothesis?
+
+```{r, execute = F, echo = F}
+run_simulation <- function(sample_sizes, effect_size, alpha, n_simulations) {
+    results <- list()
+
+    for (sample_size in sample_sizes) {
+        alpha_values <- numeric(n_simulations)
+        beta_values <- numeric(n_simulations)
+
+        for (i in 1:n_simulations) {
+            # Simulate data for two groups with the specified effect size
+            group1 <- rnorm(sample_size, mean = 1365, sd = 276)
+            group2 <- rnorm(sample_size, mean = 1365 + effect_size, sd = 276)
+
+            # Perform a two-sample t-test
+            t_test_result <- t.test(group1, group2, alternative = "less", var.equal = TRUE)
+
+            # Calculate p-value
+            p_value <- t_test_result$p.value
+
+            # Determine if null hypothesis is rejected
+            null_hypothesis_rejected <- p_value < alpha
+
+            # Calculate alpha and beta
+            alpha_values[i] <- null_hypothesis_rejected
+            beta_values[i] <- !null_hypothesis_rejected
+        }
+
+        # Calculate alpha and beta rates
+        alpha_rate <- sum(alpha_values) / n_simulations
+        beta_rate <- sum(beta_values) / n_simulations
+
+        # Store results for this sample size
+        results[[as.character(sample_size)]] <- tibble(
+            sample_size = sample_size,
+            alpha = alpha_rate,
+            beta = beta_rate
+        )
+    }
+
+    results_df <- bind_rows(results)
+    return(results_df)
+}
+
+# Example usage:
+sample_sizes <- seq(5, 65) # Replace with your desired sample sizes
+print(sample_sizes)
+effect_size <- 200
+alpha <- 0.05
+n_simulations <- 5000
+
+results_df <- run_simulation(sample_sizes, effect_size, alpha, n_simulations)
+
+# Print results
+
+results_df
+```
+
+```{r, execute = F, echo = F}
+
+results_df |>
+    ggplot(aes(x = sample_size, y = alpha)) +
+    geom_line(color = "gold") +
+    geom_point(color = "gold", size = 2) +
+    geom_hline(yintercept = 0.8, color = "tomato", size = 1) +
+    geom_vline(xintercept = 25, color = "tomato", size = 1) +
+    nerd_theme_nord() +
+    labs(
+        title = "Power Analysis",
+        subtitle = "Effect Size = 200 lb/in^2",
+        x = "Sample Size",
+        y = "Power"
+    ) +
+    labs(caption = "A sample size of 25 per group (50 total) would provide
+sufficient evidence for this application") +
+    scale_x_continuous(breaks = seq(0, 65, 5)) +
+    scale_y_continuous(breaks = seq(0, 1, 0.1))
+```
+
+```{r, execute = F, echo = F}
+results_df
+```
